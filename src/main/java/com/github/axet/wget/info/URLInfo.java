@@ -9,6 +9,7 @@ import java.util.regex.Pattern;
 
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 
 import com.github.axet.wget.RetryWrap;
@@ -160,10 +161,10 @@ public class URLInfo extends BrowserInfo {
                     if (contentType.equals("text/html")) {
                         String html = WGet.getHtml(conn, stop);
                         Document doc = Jsoup.parse(html);
-                        Elements links = doc.select("meta[http-equiv=refresh]");
-                        if (!links.isEmpty()) {
-                            String content = links.attr("content");
-                            if (content != null && !content.isEmpty()) {
+                        Element link = doc.select("meta[http-equiv=refresh]").first();
+                        if (link != null) {
+                            String content = link.attr("content");
+                            if (!content.isEmpty()) {
                                 String[] vv = content.split(";");
                                 if (vv.length > 1) {
                                     String urlmeta = vv[1];
