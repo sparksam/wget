@@ -154,7 +154,7 @@ public class URLInfo extends BrowserInfo {
                 }
 
                 HttpURLConnection meta(HttpURLConnection conn) throws IOException {
-                    String[] values = conn.getContentType().split(";");
+                    String[] values = (conn.getContentType()==null? "" : conn.getContentType()).split(";");
                     String contentType = values[0];
 
                     if (contentType.equals("text/html")) {
