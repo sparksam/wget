@@ -18,6 +18,8 @@ Support single thread, single thread with download continue / resume, and multit
 
 6) Speed measurments
 
+7) Handle HTML redirects
+
 ## Exceptions
 
 Here is a five kind of exceptions.
@@ -235,6 +237,6 @@ public class ExampleApplicationManaged {
 <dependency>
   <groupId>com.github.axet</groupId>
   <artifactId>wget</artifactId>
-  <version>1.2.20</version>
+  <version>1.3.0</version>
 </dependency>
 ```
