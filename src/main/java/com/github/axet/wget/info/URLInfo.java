@@ -158,6 +158,7 @@ public class URLInfo extends BrowserInfo {
                     String ct = conn.getContentType();
                     if (ct == null)
                         return conn;
+
                     String[] values = ct.split(";");
                     String contentType = values[0];
 
