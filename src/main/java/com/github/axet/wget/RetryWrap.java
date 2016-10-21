@@ -1,48 +1,17 @@
 package com.github.axet.wget;
 
+import com.github.axet.wget.info.ex.*;
+
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InterruptedIOException;
-import java.net.HttpRetryException;
-import java.net.HttpURLConnection;
-import java.net.ProtocolException;
-import java.net.SocketException;
-import java.net.URL;
-import java.net.UnknownHostException;
+import java.net.*;
 import java.util.concurrent.atomic.AtomicBoolean;
-
-import com.github.axet.wget.info.ex.DownloadError;
-import com.github.axet.wget.info.ex.DownloadIOCodeError;
-import com.github.axet.wget.info.ex.DownloadIOError;
-import com.github.axet.wget.info.ex.DownloadInterruptedError;
-import com.github.axet.wget.info.ex.DownloadMoved;
-import com.github.axet.wget.info.ex.DownloadRetry;
-import com.github.axet.wget.info.ex.ProxyAuth;
 
 public class RetryWrap {
     // you can change those values once at program start
     public static int RETRY_DELAY = 10;
     public static int RETRY_SLEEP = 1000;
-
-    public interface WrapReturn<T> {
-        public void proxy();
-
-        public void retry(int delay, Throwable e);
-
-        public void moved(URL url);
-
-        public T download() throws IOException;
-    }
-
-    public interface Wrap {
-        public void proxy();
-
-        public void retry(int delay, Throwable e);
-
-        public void moved(URL url);
-
-        public void download() throws IOException;
-    }
 
     static <T> void moved(AtomicBoolean stop, WrapReturn<T> r, DownloadMoved e) {
         if (stop.get())
@@ -186,5 +155,25 @@ public class RetryWrap {
             // HTTP Error 416 - Requested Range Not Satisfiable
             throw new DownloadIOCodeError(416);
         }
+    }
+
+    public interface WrapReturn<T> {
+        public void proxy();
+
+        public void retry(int delay, Throwable e);
+
+        public void moved(URL url);
+
+        public T download() throws IOException;
+    }
+
+    public interface Wrap {
+        public void proxy();
+
+        public void retry(int delay, Throwable e);
+
+        public void moved(URL url);
+
+        public void download() throws IOException;
     }
 }

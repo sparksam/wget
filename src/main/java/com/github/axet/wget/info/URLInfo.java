@@ -1,5 +1,14 @@
 package com.github.axet.wget.info;
 
+import com.github.axet.wget.RetryWrap;
+import com.github.axet.wget.WGet;
+import com.github.axet.wget.info.ex.DownloadRetry;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import rx.Observable;
+import rx.Observer;
+
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -7,62 +16,46 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.jsoup.Jsoup;
-import org.jsoup.nodes.Document;
-import org.jsoup.nodes.Element;
-import org.jsoup.select.Elements;
-
-import com.github.axet.wget.RetryWrap;
-import com.github.axet.wget.WGet;
-import com.github.axet.wget.info.ex.DownloadRetry;
-
 /**
  * URLInfo - keep all information about source in one place. Thread safe.
- * 
+ *
  * @author axet
- * 
  */
 public class URLInfo extends BrowserInfo {
+    /**
+     * connect socket timeout
+     */
+    static public final int CONNECT_TIMEOUT = 10000;
+    /**
+     * read socket timeout
+     */
+    static public final int READ_TIMEOUT = 10000;
     /**
      * source url
      */
     private URL source;
-
     /**
      * have been extracted?
      */
     private boolean extract = false;
-
     /**
      * null if size is unknown, which means we unable to restore downloads or do multi thread downlaods
      */
     private Long length;
-
     /**
      * does server support for the range param?
      */
     private boolean range;
-
     /**
      * null if here is no such file or other error
      */
     private String contentType;
-
     /**
      * come from Content-Disposition: attachment; filename="fname.ext"
      */
     private String contentFilename;
-
     // set cookie
     private String cookie;
-
-    /**
-     * Notify States
-     */
-    public enum States {
-        EXTRACTING, EXTRACTING_DONE, DOWNLOADING, RETRYING, STOP, ERROR, DONE;
-    }
-
     /**
      * download state
      */
@@ -75,18 +68,7 @@ public class URLInfo extends BrowserInfo {
      * retrying delay;
      */
     private int delay;
-
     private ProxyInfo proxy;
-
-    /**
-     * connect socket timeout
-     */
-    static public final int CONNECT_TIMEOUT = 10000;
-
-    /**
-     * read socket timeout
-     */
-    static public final int READ_TIMEOUT = 10000;
 
     public URLInfo(URL source) {
         this.source = source;
@@ -117,14 +99,10 @@ public class URLInfo extends BrowserInfo {
     }
 
     public void extract() {
-        extract(new AtomicBoolean(false), new Runnable() {
-            @Override
-            public void run() {
-            }
-        });
+        extract(new AtomicBoolean(false), Observable.create(Observer::onCompleted));
     }
 
-    public void extract(final AtomicBoolean stop, final Runnable notify) {
+    public void extract(final AtomicBoolean stop, final rx.Observable notify) {
         try {
             HttpURLConnection conn;
 
@@ -143,7 +121,7 @@ public class URLInfo extends BrowserInfo {
 
                 HttpURLConnection download(URLInfo url) throws IOException {
                     setState(States.EXTRACTING);
-                    notify.run();
+                    notify.subscribe();
 
                     try {
                         return meta(extractRange(url));
@@ -155,7 +133,7 @@ public class URLInfo extends BrowserInfo {
                 }
 
                 HttpURLConnection meta(HttpURLConnection conn) throws IOException {
-                    String[] values = (conn.getContentType()==null? "" : conn.getContentType()).split(";");
+                    String[] values = (conn.getContentType() == null ? "" : conn.getContentType()).split(";");
                     String contentType = values[0];
 
                     if (contentType.equals("text/html")) {
@@ -193,7 +171,7 @@ public class URLInfo extends BrowserInfo {
                 @Override
                 public void retry(int d, Throwable ee) {
                     setDelay(d, ee);
-                    notify.run();
+                    notify.subscribe();
                 }
 
                 @Override
@@ -203,7 +181,7 @@ public class URLInfo extends BrowserInfo {
                     url = u;
 
                     setState(States.RETRYING);
-                    notify.run();
+                    notify.subscribe();
                 }
             });
 
@@ -225,7 +203,7 @@ public class URLInfo extends BrowserInfo {
             setEmpty(true);
 
             setState(States.EXTRACTING_DONE);
-            notify.run();
+            notify.subscribe();
         } catch (RuntimeException e) {
             setState(States.ERROR, e);
 
@@ -342,7 +320,7 @@ public class URLInfo extends BrowserInfo {
     synchronized public void setDelay(int delay, Throwable e) {
         this.delay = delay;
         this.exception = e;
-        this.state = URLInfo.States.RETRYING;
+        this.state = States.RETRYING;
     }
 
     synchronized public boolean getRange() {
@@ -367,6 +345,13 @@ public class URLInfo extends BrowserInfo {
 
     synchronized public void setCookie(String cookie) {
         this.cookie = cookie;
+    }
+
+    /**
+     * Notify States
+     */
+    public enum States {
+        EXTRACTING, EXTRACTING_DONE, DOWNLOADING, RETRYING, STOP, ERROR, DONE;
     }
 
 }

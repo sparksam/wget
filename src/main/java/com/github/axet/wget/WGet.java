@@ -1,10 +1,14 @@
 package com.github.axet.wget;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
+import com.github.axet.wget.info.DownloadInfo;
+import com.github.axet.wget.info.ex.DownloadInterruptedError;
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.FilenameUtils;
+import rx.Observable;
+import rx.Scheduler;
+import rx.subjects.AsyncSubject;
+
+import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLDecoder;
@@ -12,43 +16,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.apache.commons.io.FileUtils;
-import org.apache.commons.io.FilenameUtils;
-
-import com.github.axet.wget.info.DownloadInfo;
-import com.github.axet.wget.info.ex.DownloadInterruptedError;
-
 public class WGet {
 
-    private DownloadInfo info;
-
     Direct d;
-
     File targetFile;
-
-    public interface HtmlLoader {
-        /**
-         * some socket problem, retyring
-         * 
-         * @param delay
-         * @param e
-         */
-        public void notifyRetry(int delay, Throwable e);
-
-        /**
-         * start downloading
-         */
-        public void notifyDownloading();
-
-        /**
-         * document moved, relocating
-         */
-        public void notifyMoved();
-    }
+    private DownloadInfo info;
 
     /**
      * download with events control.
-     * 
+     *
      * @param source
      * @param target
      */
@@ -57,43 +33,34 @@ public class WGet {
     }
 
     /**
+     * download with events control.
+     *
+     * @param source
+     * @param target
+     * @param scheduler
+     */
+    public WGet(URL source, File target, Scheduler scheduler) {
+        this(source, target);
+        createDirect(scheduler);
+    }
+
+    /**
      * application controlled download / resume. you should specify targetfile name exactly. since you are choice resume
      * / multipart download. application unable to control file name choice / creation.
-     * 
-     * @param info
-     *            download info
-     * @param targetFile
-     *            target files
+     *
+     * @param info       download info
+     * @param targetFile target files
      */
+
+    public WGet(DownloadInfo info, File targetFile, Scheduler scheduler) {
+        this(info, targetFile);
+        createDirect(scheduler);
+    }
+
     public WGet(DownloadInfo info, File targetFile) {
         this.info = info;
         this.targetFile = targetFile;
         create();
-    }
-
-    void create(URL source, File target) {
-        info = new DownloadInfo(source);
-        info.extract();
-        create(target);
-    }
-
-    void create(File target) {
-        targetFile = calcName(info, target);
-        create();
-    }
-
-    void create() {
-        d = createDirect();
-    }
-
-    Direct createDirect() {
-        if (info.multipart()) {
-            return new DirectMultipart(info, targetFile);
-        } else if (info.getRange()) {
-            return new DirectRange(info, targetFile);
-        } else {
-            return new DirectSingle(info, targetFile);
-        }
     }
 
     public static File calcName(URL source, File target) {
@@ -146,22 +113,6 @@ public class WGet {
         }
 
         return targetFile;
-    }
-
-    public void download() {
-        download(new AtomicBoolean(false), new Runnable() {
-            @Override
-            public void run() {
-            }
-        });
-    }
-
-    public void download(AtomicBoolean stop, Runnable notify) {
-        d.download(stop, notify);
-    }
-
-    public DownloadInfo getInfo() {
-        return info;
     }
 
     public static String getHtml(URL source) {
@@ -269,5 +220,71 @@ public class WGet {
         }
 
         return contents.toString();
+    }
+
+    void create(URL source, File target, Scheduler scheduler) {
+        create(source, target);
+        createDirect(scheduler);
+    }
+
+    void create(URL source, File target) {
+        info = new DownloadInfo(source);
+        info.extract();
+        create(target);
+    }
+
+    void create(File target) {
+        targetFile = calcName(info, target);
+        create();
+    }
+
+    void create() {
+        d = createDirect(null);
+    }
+
+    void create(Scheduler scheduler) {
+        d = createDirect(scheduler);
+    }
+
+    Direct createDirect(Scheduler scheduler) {
+        if (info.multipart()) {
+            return new DirectMultipart(info, targetFile, scheduler);
+        } else if (info.getRange()) {
+            return new DirectRange(info, targetFile, scheduler);
+        } else {
+            return new DirectSingle(info, targetFile, scheduler);
+        }
+    }
+
+    public void download() {
+        download(new AtomicBoolean(false), AsyncSubject.create());
+    }
+
+    public void download(AtomicBoolean stop, Observable notify) {
+        d.download(stop, notify);
+    }
+
+    public DownloadInfo getInfo() {
+        return info;
+    }
+
+    public interface HtmlLoader {
+        /**
+         * some socket problem, retyring
+         *
+         * @param delay
+         * @param e
+         */
+        public void notifyRetry(int delay, Throwable e);
+
+        /**
+         * start downloading
+         */
+        public void notifyDownloading();
+
+        /**
+         * document moved, relocating
+         */
+        public void notifyMoved();
     }
 }

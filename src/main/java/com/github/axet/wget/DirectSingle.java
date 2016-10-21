@@ -1,5 +1,11 @@
 package com.github.axet.wget;
 
+import com.github.axet.wget.info.DownloadInfo;
+import com.github.axet.wget.info.URLInfo;
+import com.github.axet.wget.info.ex.DownloadInterruptedError;
+import rx.Observable;
+import rx.Scheduler;
+
 import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.IOException;
@@ -8,25 +14,40 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import com.github.axet.wget.info.DownloadInfo;
-import com.github.axet.wget.info.URLInfo;
-import com.github.axet.wget.info.ex.DownloadInterruptedError;
-
 public class DirectSingle extends Direct {
 
-    /**
-     * 
-     * @param info
-     *            download file information
-     * @param target
-     *            target file
-     */
     public DirectSingle(DownloadInfo info, File target) {
         super(info, target);
     }
 
+    public DirectSingle(DownloadInfo info, File target, Scheduler scheduler) {
+        super(info, target, scheduler);
+    }
+
     /**
-     * 
+     * check existing file for download resume. for single download it will
+     * check file dose not exist or zero size. so we can resume download.
+     *
+     * @param info
+     *            download info
+     * @param targetFile
+     *            target file
+     * @return return true - if all ok, false - if download can not be restored.
+     */
+    public static boolean canResume(DownloadInfo info, File targetFile) {
+        if (info.getCount() != 0)
+            return false;
+
+        if (targetFile.exists()) {
+            if (targetFile.length() != 0)
+                return false;
+        }
+
+        return true;
+    }
+
+    /**
+     *
      * @param info
      *            download info
      * @param stop
@@ -35,7 +56,7 @@ public class DirectSingle extends Direct {
      *            progress notify call
      * @throws IOException
      */
-    void downloadPart(DownloadInfo info, AtomicBoolean stop, Runnable notify) throws IOException {
+    void downloadPart(DownloadInfo info, AtomicBoolean stop, Observable notify) throws IOException {
         RandomAccessFile fos = null;
 
         try {
@@ -58,7 +79,7 @@ public class DirectSingle extends Direct {
                 fos.write(bytes, 0, read);
 
                 info.setCount(info.getCount() + read);
-                notify.run();
+                notify.subscribe();
 
                 if (stop.get())
                     throw new DownloadInterruptedError("stop");
@@ -74,9 +95,9 @@ public class DirectSingle extends Direct {
     }
 
     @Override
-    public void download(final AtomicBoolean stop, final Runnable notify) {
+    public void download(final AtomicBoolean stop, final Observable notify) {
         info.setState(URLInfo.States.DOWNLOADING);
-        notify.run();
+        notify.subscribe();
 
         try {
             RetryWrap.wrap(stop, new RetryWrap.Wrap() {
@@ -88,7 +109,7 @@ public class DirectSingle extends Direct {
                 @Override
                 public void download() throws IOException {
                     info.setState(URLInfo.States.DOWNLOADING);
-                    notify.run();
+                    notify.subscribe();
 
                     downloadPart(info, stop, notify);
                 }
@@ -96,50 +117,28 @@ public class DirectSingle extends Direct {
                 @Override
                 public void retry(int delay, Throwable e) {
                     info.setDelay(delay, e);
-                    notify.run();
+                    notify.subscribe();
                 }
 
                 @Override
                 public void moved(URL url) {
                     info.setState(URLInfo.States.RETRYING);
-                    notify.run();
+                    notify.subscribe();
                 }
             });
 
             info.setState(URLInfo.States.DONE);
-            notify.run();
+            notify.subscribe();
         } catch (DownloadInterruptedError e) {
             info.setState(URLInfo.States.STOP);
-            notify.run();
+            notify.subscribe();
 
             throw e;
         } catch (RuntimeException e) {
             info.setState(URLInfo.States.ERROR);
-            notify.run();
+            notify.subscribe();
 
             throw e;
         }
-    }
-
-    /**
-     * check existing file for download resume. for single download it will
-     * check file dose not exist or zero size. so we can resume download.
-     * 
-     * @param info
-     *            download info
-     * @param targetFile
-     *            target file
-     * @return return true - if all ok, false - if download can not be restored.
-     */
-    public static boolean canResume(DownloadInfo info, File targetFile) {
-        if (info.getCount() != 0)
-            return false;
-
-        if (targetFile.exists()) {
-            if (targetFile.length() != 0)
-                return false;
-        }
-
-        return true;
     }
 }

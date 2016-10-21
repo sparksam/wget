@@ -5,38 +5,8 @@ import java.util.ArrayList;
 public class SpeedInfo {
     public static int SAMPLE_LENGTH = 1000;
     public static int SAMPLE_MAX = 20;
-
-    public class Sample {
-        // bytes downloaded
-        public long current;
-        // current time
-        public long now;
-        // start block? used to mark block after download has been altered /
-        // restarted
-        public boolean start;
-
-        public Sample() {
-            current = 0;
-            now = System.currentTimeMillis();
-            start = false;
-        }
-
-        public Sample(long current) {
-            this.current = current;
-            now = System.currentTimeMillis();
-            start = false;
-        }
-
-        public Sample(long current, long now) {
-            this.current = current;
-            this.now = now;
-            start = false;
-        }
-    }
-
-    protected ArrayList<Sample> samples = new ArrayList<SpeedInfo.Sample>();
+    protected ArrayList<Sample> samples = new ArrayList<Sample>();
     protected long peak;
-
     // start sample use to calculate average speed
     protected Sample start = null;
 
@@ -45,7 +15,7 @@ public class SpeedInfo {
 
     /**
      * Start calculate speed from 'current' bytes downloaded
-     * 
+     *
      * @param current
      *            current length
      */
@@ -58,7 +28,7 @@ public class SpeedInfo {
 
     /**
      * step download process with 'current' bytes downloaded
-     * 
+     *
      * @param current
      *            current length
      */
@@ -90,7 +60,7 @@ public class SpeedInfo {
 
     /**
      * Current download speed
-     * 
+     *
      * @return bytes per second
      */
     synchronized public int getCurrentSpeed() {
@@ -112,7 +82,7 @@ public class SpeedInfo {
 
     /**
      * Average speed from start download
-     * 
+     *
      * @return bytes per second
      */
     synchronized public int getAverageSpeed() {
@@ -129,7 +99,7 @@ public class SpeedInfo {
 
     /**
      * Average speed for maximum stepsBack steps
-     * 
+     *
      * @param stepsBack
      *            how many steps aproximate
      * @return bytes per second
@@ -169,10 +139,6 @@ public class SpeedInfo {
         return peak;
     }
 
-    //
-    // protected
-    //
-
     protected Sample getStart() {
         for (int i = samples.size() - 1; i >= 0; i--) {
             Sample s = samples.get(i);
@@ -182,6 +148,10 @@ public class SpeedInfo {
 
         return null;
     }
+
+    //
+    // protected
+    //
 
     protected void add(Sample s) {
         // check if we have broken / restarted download. check if here some
@@ -206,7 +176,7 @@ public class SpeedInfo {
 
     /**
      * Number of samples
-     * 
+     *
      * @return return number of samples in the row (before download restart)
      */
     protected int getRowSamples() {
@@ -232,6 +202,34 @@ public class SpeedInfo {
         for (Sample s : samples) {
             if (peak < s.current)
                 peak = s.current;
+        }
+    }
+
+    public class Sample {
+        // bytes downloaded
+        public long current;
+        // current time
+        public long now;
+        // start block? used to mark block after download has been altered /
+        // restarted
+        public boolean start;
+
+        public Sample() {
+            current = 0;
+            now = System.currentTimeMillis();
+            start = false;
+        }
+
+        public Sample(long current) {
+            this.current = current;
+            now = System.currentTimeMillis();
+            start = false;
+        }
+
+        public Sample(long current, long now) {
+            this.current = current;
+            this.now = now;
+            start = false;
         }
     }
 }

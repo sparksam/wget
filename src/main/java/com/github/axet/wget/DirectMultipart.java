@@ -1,14 +1,5 @@
 package com.github.axet.wget;
 
-import java.io.BufferedInputStream;
-import java.io.File;
-import java.io.IOException;
-import java.io.RandomAccessFile;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.util.concurrent.atomic.AtomicBoolean;
-
-import com.github.axet.threads.LimitThreadPool;
 import com.github.axet.wget.info.DownloadInfo;
 import com.github.axet.wget.info.DownloadInfo.Part;
 import com.github.axet.wget.info.DownloadInfo.Part.States;
@@ -16,108 +7,142 @@ import com.github.axet.wget.info.URLInfo;
 import com.github.axet.wget.info.ex.DownloadInterruptedError;
 import com.github.axet.wget.info.ex.DownloadMultipartError;
 import com.github.axet.wget.info.ex.DownloadRetry;
+import rx.Observable;
+import rx.Scheduler;
+import rx.subjects.AsyncSubject;
+
+import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class DirectMultipart extends Direct {
 
     static public final int THREAD_COUNT = 3;
     static public final int RETRY_DELAY = 10;
 
-    LimitThreadPool worker = new LimitThreadPool(THREAD_COUNT);
-
     boolean fatal = false;
 
     Object lock = new Object();
 
-    /**
-     * 
-     * @param info
-     *            download file information
-     * @param target
-     *            target file
-     */
     public DirectMultipart(DownloadInfo info, File target) {
         super(info, target);
     }
 
+    public DirectMultipart(DownloadInfo info, File target, Scheduler scheduler) {
+        super(info, target, scheduler);
+    }
+
+    /**
+     * check existing file for download resume. for multipart download it may
+     * check all parts CRC
+     *
+     * @param info       download information
+     * @param targetFile target file
+     * @return return true - if all ok, false - if download can not be restored.
+     */
+    public static boolean canResume(DownloadInfo info, File targetFile) {
+        if (!targetFile.exists())
+            return false;
+
+        if (targetFile.length() < info.getCount())
+            return false;
+
+        return true;
+    }
+
     /**
      * download part.
-     * 
+     * <p>
      * if returns normally - part is fully donwloaded. other wise - it throws
      * RuntimeException or DownloadRetry or DownloadError
-     * 
-     * @param part
-     *            downloading part
-     * @param stop
-     *            multithread stop command
-     * @param notify
-     *            progress notify call
-     * 
+     *
+     * @param part   downloading part
+     * @param stop   multithread stop command
+     * @param notify progress notify call
      */
-    void downloadPart(Part part, AtomicBoolean stop, Runnable notify) throws IOException {
-        RandomAccessFile fos = null;
-        BufferedInputStream binaryreader = null;
+    Observable<Part> downloadPart(Part part, AtomicBoolean stop, Observable notify) {
+        return Observable.create(subscriber -> {
+            RandomAccessFile fos = null;
+            BufferedInputStream binaryreader = null;
 
-        try {
-            long start = part.getStart() + part.getCount();
-            long end = part.getEnd();
+            try {
+                long start = part.getStart() + part.getCount();
+                long end = part.getEnd();
 
-            // fully downloaded already?
-            if (end - start + 1 == 0)
-                return;
+                // fully downloaded already?
+                if (end - start + 1 == 0)
+                    return;
 
-            HttpURLConnection conn = info.openConnection();
+                HttpURLConnection conn = info.openConnection();
 
-            File f = target;
+                File f = target;
 
-            fos = new RandomAccessFile(f, "rw");
+                fos = new RandomAccessFile(f, "rw");
 
-            conn.setRequestProperty("Range", "bytes=" + start + "-" + end);
-            fos.seek(start);
+                conn.setRequestProperty("Range", "bytes=" + start + "-" + end);
+                fos.seek(start);
 
-            byte[] bytes = new byte[BUF_SIZE];
-            int read = 0;
+                byte[] bytes = new byte[BUF_SIZE];
+                int read = 0;
 
-            RetryWrap.check(conn);
+                RetryWrap.check(conn);
 
-            binaryreader = new BufferedInputStream(conn.getInputStream());
+                binaryreader = new BufferedInputStream(conn.getInputStream());
 
-            boolean localStop = false;
+                boolean localStop = false;
 
-            while ((read = binaryreader.read(bytes)) > 0) {
-                // ensure we do not download more then part size.
-                // if so cut bytes and stop download
-                long partEnd = part.getLength() - part.getCount();
-                if (read > partEnd) {
-                    read = (int) partEnd;
-                    localStop = true;
+                while ((read = binaryreader.read(bytes)) > 0) {
+                    // ensure we do not download more then part size.
+                    // if so cut bytes and stop download
+                    long partEnd = part.getLength() - part.getCount();
+                    if (read > partEnd) {
+                        read = (int) partEnd;
+                        localStop = true;
+                    }
+
+                    fos.write(bytes, 0, read);
+                    part.setCount(part.getCount() + read);
+                    info.calculate();
+                    notify.subscribe();
+
+                    if (stop.get())
+                        throw new DownloadInterruptedError("stop");
+                    if (Thread.interrupted())
+                        throw new DownloadInterruptedError("interrupted");
+                    if (fatal())
+                        throw new DownloadInterruptedError("fatal");
+
+                    // do not throw exception here. we normally done downloading.
+                    // just took a littlbe bit more
+                    if (localStop)
+                        return;
                 }
 
-                fos.write(bytes, 0, read);
-                part.setCount(part.getCount() + read);
-                info.calculate();
-                notify.run();
-
-                if (stop.get())
-                    throw new DownloadInterruptedError("stop");
-                if (Thread.interrupted())
-                    throw new DownloadInterruptedError("interrupted");
-                if (fatal())
-                    throw new DownloadInterruptedError("fatal");
-
-                // do not throw exception here. we normally done downloading.
-                // just took a littlbe bit more
-                if (localStop)
-                    return;
+                if (part.getCount() != part.getLength())
+                    throw new DownloadRetry("EOF before end of part");
+            } catch (FileNotFoundException e) {
+                e.printStackTrace();
+            } catch (IOException e) {
+                e.printStackTrace();
+            } finally {
+                if (binaryreader != null)
+                    try {
+                        binaryreader.close();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                if (fos != null)
+                    try {
+                        fos.close();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
             }
-
-            if (part.getCount() != part.getLength())
-                throw new DownloadRetry("EOF before end of part");
-        } finally {
-            if (binaryreader != null)
-                binaryreader.close();
-            if (fos != null)
-                fos.close();
-        }
+            subscriber.onCompleted();
+        });
 
     }
 
@@ -140,68 +165,62 @@ public class DirectMultipart extends Direct {
             return str;
     }
 
-    void downloadWorker(final Part p, final AtomicBoolean stop, final Runnable notify) throws InterruptedException {
-        worker.blockExecute(new Runnable() {
-            @Override
-            public void run() {
-                {
-                    String f = "%s - Part: %d";
-                    Thread t = Thread.currentThread();
-                    t.setName(String.format(f, trimLen(info.getSource().toString(), 64), p.getNumber()));
-                }
-
-                try {
-                    RetryWrap.wrap(stop, new RetryWrap.Wrap() {
-
-                        @Override
-                        public void proxy() {
-                            info.getProxy().set();
-                        }
-
-                        @Override
-                        public void download() throws IOException {
-                            p.setState(States.DOWNLOADING);
-                            notify.run();
-
-                            downloadPart(p, stop, notify);
-                        }
-
-                        @Override
-                        public void retry(int delay, Throwable e) {
-                            p.setDelay(delay, e);
-                            notify.run();
-                        }
-
-                        @Override
-                        public void moved(URL url) {
-                            p.setState(States.RETRYING);
-                            notify.run();
-                        }
-
-                    });
-                    p.setState(States.DONE);
-                    notify.run();
-                } catch (DownloadInterruptedError e) {
-                    p.setState(States.STOP, e);
-                    notify.run();
-
-                    fatal(true);
-                } catch (RuntimeException e) {
-                    p.setState(States.ERROR, e);
-                    notify.run();
-
-                    fatal(true);
-                }
-            }
-        });
-
+    Observable<Part> downloadWorker(final Part p, final AtomicBoolean stop, final Observable notify) {
         p.setState(States.DOWNLOADING);
+        System.out.println("Part" + p.getNumber());
+        return Observable.create(subscriber -> {
+            try {
+                RetryWrap.wrap(stop, new RetryWrap.Wrap() {
+
+                    @Override
+                    public void proxy() {
+                        info.getProxy().set();
+                    }
+
+                    @Override
+                    public void download() throws IOException {
+                        p.setState(States.DOWNLOADING);
+                        notify.subscribe();
+                        downloadPart(p, stop, notify).subscribe();
+                    }
+
+                    @Override
+                    public void retry(int delay, Throwable e) {
+                        p.setDelay(delay, e);
+                        notify.subscribe();
+                    }
+
+                    @Override
+                    public void moved(URL url) {
+                        p.setState(States.RETRYING);
+                        notify.subscribe();
+                    }
+
+                });
+                p.setState(States.DONE);
+                notify.subscribe();
+            } catch (DownloadInterruptedError e) {
+                p.setState(States.STOP, e);
+                subscriber.onError(e);
+                notify.subscribe();
+
+                fatal(true);
+            } catch (RuntimeException e) {
+                p.setState(States.ERROR, e);
+                subscriber.onError(e);
+                notify.subscribe();
+
+                fatal(true);
+            }
+            subscriber.onCompleted();
+        });
+//        return p;
     }
 
     /**
      * return next part to download. ensure this part is not done() and not
      * currently downloading
-     * 
+     *
      * @return
      */
     Part getPart() {
@@ -215,9 +234,21 @@ public class DirectMultipart extends Direct {
     }
 
     /**
+     * return all parts to download. Ensure those parts are not done() and nor currently downoalding
+     *
+     * @return
+     */
+    Collection<Part> getParts() {
+        ArrayList<Part> parts = new ArrayList<>();
+        info.getParts().stream().
+                filter(part -> part.getState().equals(States.QUEUED)).forEach(parts::add);
+        return parts;
+    }
+
+    /**
      * return true, when thread pool empty, and here is no unfinished parts to
      * download
-     * 
+     *
      * @return true - done. false - not done yet
      * @throws InterruptedException
      */
@@ -226,42 +257,43 @@ public class DirectMultipart extends Direct {
             throw new DownloadInterruptedError("stop");
         if (Thread.interrupted())
             throw new DownloadInterruptedError("interupted");
-        if (worker.active())
-            return false;
-        if (getPart() != null)
+//        if (worker.active())
+//            return false;
+        if (!getParts().isEmpty())
             return false;
 
         return true;
     }
 
     @Override
-    public void download(AtomicBoolean stop, Runnable notify) {
+    public void download(AtomicBoolean stop, Observable notify) {
         for (Part p : info.getParts()) {
             if (p.getState().equals(States.DONE))
                 continue;
             p.setState(States.QUEUED);
         }
         info.setState(URLInfo.States.DOWNLOADING);
-        notify.run();
+        notify.subscribe();
 
         try {
-            while (!done(stop)) {
-                Part p = getPart();
-                if (p != null) {
-                    downloadWorker(p, stop, notify);
-                } else {
-                    // we have no parts left.
-                    //
-                    // wait until task ends and check again if we have to retry.
-                    // we have to check if last part back to queue in case of
-                    // RETRY state
-                    worker.waitUntilNextTaskEnds();
-                }
+            if (!done(stop)) {
+                //TODO Review error handling
+                AsyncSubject.from(getParts()).flatMap(p -> downloadWorker(p, stop, notify).subscribeOn(scheduler))
+                        .subscribeOn(scheduler).toBlocking().subscribe();
+//                Part p = getPart();
+//                if (p != null) {
+//                    downloadWorker(p, stop, notify).toBlocking().subscribe();
+//                } else {
+//                    // we have no parts left.
+//                    //
+//                    // wait until task ends and check again if we have to retry.
+//                    // we have to check if last part back to queue in case of
+//                    // RETRY state
+//                }
 
                 // if we start to receive errors. stop add new tasks and wait
                 // until all active tasks be emptied
                 if (fatal()) {
-                    worker.waitUntilTermination();
 
                     // check if all parts finished with interrupted, throw one
                     // interrupted
@@ -286,44 +318,24 @@ public class DirectMultipart extends Direct {
             }
 
             info.setState(URLInfo.States.DONE);
-            notify.run();
-        } catch (InterruptedException e) {
+            notify.subscribe();
+        }
+//        catch (InterruptedException e) {
+//            info.setState(URLInfo.States.STOP);
+//            notify.subscribe();
+//
+//            throw new DownloadInterruptedError(e);
+//        }
+        catch (DownloadInterruptedError e) {
             info.setState(URLInfo.States.STOP);
-            notify.run();
-
-            throw new DownloadInterruptedError(e);
-        } catch (DownloadInterruptedError e) {
-            info.setState(URLInfo.States.STOP);
-            notify.run();
+            notify.subscribe();
 
             throw e;
         } catch (RuntimeException e) {
             info.setState(URLInfo.States.ERROR);
-            notify.run();
-
+            notify.subscribe();
             throw e;
         } finally {
-            worker.shutdown();
         }
-    }
-
-    /**
-     * check existing file for download resume. for multipart download it may
-     * check all parts CRC
-     * 
-     * @param info
-     *            download information
-     * @param targetFile
-     *            target file
-     * @return return true - if all ok, false - if download can not be restored.
-     */
-    public static boolean canResume(DownloadInfo info, File targetFile) {
-        if (!targetFile.exists())
-            return false;
-
-        if (targetFile.length() < info.getCount())
-            return false;
-
-        return true;
     }
 }

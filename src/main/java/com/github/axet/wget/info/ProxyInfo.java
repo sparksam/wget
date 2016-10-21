@@ -1,11 +1,11 @@
 package com.github.axet.wget.info;
 
+import com.github.axet.wget.info.ex.DownloadError;
+
 import java.net.Authenticator;
 import java.net.InetSocketAddress;
 import java.net.PasswordAuthentication;
 import java.net.Proxy;
-
-import com.github.axet.wget.info.ex.DownloadError;
 
 public class ProxyInfo {
     public Proxy proxy;

@@ -1,9 +1,9 @@
 package com.github.axet.wget;
 
-import java.net.URL;
-
 import com.github.axet.wget.info.DownloadInfo;
 import com.github.axet.wget.info.ProxyInfo;
+
+import java.net.URL;
 
 public class GetHtmlProxy {
 
